@@ -5,8 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "einops>=0.8.2",
     "gymnasium-robotics>=1.4.2",
+    "h5py>=3.0",
     "mujoco>=3.6.0",
+    "requests>=2.0",
     "rich>=15.0.0",
     "stable-baselines3>=2.3.0",
     "torch>=2.0",
