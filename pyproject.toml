@@ -7,8 +7,11 @@ requires-python = ">=3.13"
 dependencies = [
     "gymnasium-robotics>=1.4.2",
     "mujoco>=3.6.0",
+    "rich>=15.0.0",
+    "stable-baselines3>=2.3.0",
     "torch>=2.0",
     "torchvision>=0.15",
+    "tqdm>=4.67.3",
     "wandb>=0.25.1",
 ]
 
