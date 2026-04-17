@@ -13,14 +13,24 @@ import os
 
 import torch
 import wandb
+import shortuuid
 
 from temporal_unet import TemporalUnet
 from trajectory_diffusion import GaussianDiffusion
 from antmaze_dataset import AntmazeDataset
 from trajectory_trainer import Trainer
+from evaluate import evaluate, dataset_to_env_id
 
 
-def parse_args():
+DATASET_TO_NAME = {
+    'antmaze-umaze-v2': 'U-Maze',
+    'antmaze-umaze-diverse-v2': 'U-Maze Diverse',
+    'antmaze-big-diverse-v2': 'Big',
+    'antmaze-hardest-diverse-v2': 'Hardest',
+}
+
+
+def parse_args(uuid: str):
     parser = argparse.ArgumentParser(description='Train diffuser on antmaze')
 
     # dataset
@@ -53,26 +63,39 @@ def parse_args():
     # checkpointing / logging
     parser.add_argument('--save_freq', default=20_000, type=int)
     parser.add_argument('--log_freq', default=100, type=int)
-    parser.add_argument('--results_folder', default='./logs/antmaze')
+    parser.add_argument('--results_folder', default=f'./logs/antmaze-{uuid}')
     parser.add_argument('--load_step', default=None, type=int,
                         help='Resume from this checkpoint step')
+
+    # evaluation
+    parser.add_argument('--eval_freq', default=0, type=int,
+                        help='Evaluate every N epochs (0 to disable)')
+    parser.add_argument('--eval_seeds', nargs='+', default=[0, 1, 2], type=int)
+    parser.add_argument('--n_eval_episodes', default=100, type=int)
+    parser.add_argument('--replan_every', default=5, type=int)
+    parser.add_argument('--env_id', default=None,
+                        help='Gymnasium env id (inferred from --dataset if not set)')
 
     # early stopping
     parser.add_argument('--patience', default=5, type=int,
                         help='Stop after this many epochs without improvement (0 to disable)')
     parser.add_argument('--min_delta', default=1e-4, type=float,
                         help='Minimum loss improvement to count as progress')
+    parser.add_argument('--ema_alpha', default=0.1, type=float,
+                        help='Smoothing factor for loss EMA used in early stopping (0=no smoothing)')
 
     # misc
     parser.add_argument('--device', default='cuda')
     parser.add_argument('--seed', default=None, type=int)
     parser.add_argument('--wandb_project', default='diffuser-antmaze')
+    parser.add_argument('--id', type=str, default=uuid)
 
     return parser.parse_args()
 
 
 def main():
-    args = parse_args()
+    uuid = shortuuid.ShortUUID().random(length=8)
+    args = parse_args(uuid)
 
     if args.seed is not None:
         torch.manual_seed(args.seed)
@@ -147,7 +170,7 @@ def main():
     # ------------------------------------------------------------------
     wandb.init(
         project=args.wandb_project,
-        name=os.path.basename(args.results_folder),
+        name=DATASET_TO_NAME[args.dataset],
         config=vars(args),
         reinit=True,
     )
@@ -158,19 +181,44 @@ def main():
     n_epochs = args.n_train_steps // args.n_steps_per_epoch
     best_loss = float('inf')
     epochs_without_improvement = 0
+    smoothed_loss = None
+    eval_env_id = args.env_id or dataset_to_env_id(args.dataset)
 
     for epoch in range(n_epochs):
         print(f'Epoch {epoch} / {n_epochs} | {args.results_folder}')
         mean_loss = trainer.train(n_train_steps=args.n_steps_per_epoch)
 
+        if args.eval_freq > 0 and (epoch + 1) % args.eval_freq == 0:
+            print(f'[ Eval ] epoch {epoch} | {eval_env_id}')
+            results = evaluate(
+                trainer.ema_model, dataset, eval_env_id,
+                n_episodes=args.n_eval_episodes,
+                replan_every=args.replan_every,
+                seeds=args.eval_seeds,
+                device=device,
+            )
+            wandb.log({
+                'eval/normalized_score': results['normalized_score'],
+                **{f'eval/normalized_score_seed{s}': sc
+                   for s, sc in zip(args.eval_seeds, results['seed_scores'])},
+            }, step=trainer.step)
+            print(f'[ Eval ] normalized_score={results["normalized_score"]:.1f}')
+
         if args.patience > 0:
-            if mean_loss < best_loss - args.min_delta:
-                best_loss = mean_loss
+            # EMA smoothing: on the first epoch just seed with the raw loss
+            if smoothed_loss is None:
+                smoothed_loss = mean_loss
+            else:
+                smoothed_loss = args.ema_alpha * mean_loss + (1 - args.ema_alpha) * smoothed_loss
+            wandb.log({'loss_smoothed': smoothed_loss}, step=trainer.step)
+
+            if smoothed_loss < best_loss - args.min_delta:
+                best_loss = smoothed_loss
                 epochs_without_improvement = 0
             else:
                 epochs_without_improvement += 1
                 print(f'No improvement for {epochs_without_improvement}/{args.patience} epochs '
-                      f'(best={best_loss:.4f}, current={mean_loss:.4f})')
+                      f'(best={best_loss:.4f}, smoothed={smoothed_loss:.4f})')
                 if epochs_without_improvement >= args.patience:
                     print(f'Early stopping at epoch {epoch}.')
                     wandb.log({'early_stop_epoch': epoch})

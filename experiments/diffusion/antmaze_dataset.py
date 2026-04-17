@@ -36,6 +36,14 @@ DATASET_URLS = {
         'http://rail.eecs.berkeley.edu/datasets/offline_rl/ant_maze_new/'
         'Ant_maze_large_noisy_multistart_False_multigoal_False_sparse.hdf5'
     ),
+    'antmaze-big-diverse-v2': (
+        'https://rail.eecs.berkeley.edu/datasets/offline_rl/ant_maze_new/'
+        'Ant_maze_big-maze_noisy_multistart_True_multigoal_True_sparse.hdf5'
+    ),
+    'antmaze-hardest-diverse-v2': (
+        'https://rail.eecs.berkeley.edu/datasets/offline_rl/ant_maze_new/'
+        'Ant_maze_hardest-maze_noisy_multistart_True_multigoal_False_sparse.hdf5'
+    )
 }
 
 
