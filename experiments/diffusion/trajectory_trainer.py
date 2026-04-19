@@ -207,7 +207,7 @@ class Trainer:
         self._load_from_path(path)
 
     def _load_from_path(self, path):
-        data = torch.load(path, weights_only=True)
+        data = torch.load(path, weights_only=True, map_location=self.device)
         self.step = data['step']
         self.model.load_state_dict(data['model'])
         self.ema_model.load_state_dict(data['ema'])
