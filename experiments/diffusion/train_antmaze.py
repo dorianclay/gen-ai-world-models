@@ -101,7 +101,7 @@ def parse_args(uuid: str):
     # misc
     parser.add_argument('--device', default='cuda')
     parser.add_argument('--seed', default=None, type=int)
-    parser.add_argument('--wandb_project', default='diffuser-antmaze')
+    parser.add_argument('--wandb_project', default='gen-ai-world-models')
     parser.add_argument('--id', type=str, default=uuid)
 
     return parser.parse_args()
@@ -269,6 +269,7 @@ def main():
                     wandb.log({'early_stop_epoch': epoch})
                     break
 
+    trainer.save(trainer.step)
     wandb.finish()
 
 
