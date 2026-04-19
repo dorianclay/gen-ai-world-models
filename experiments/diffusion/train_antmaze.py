@@ -17,7 +17,9 @@ import shortuuid
 
 from temporal_unet import TemporalUnet
 from trajectory_diffusion import GaussianDiffusion
-from antmaze_dataset import AntmazeDataset
+from antmaze_dataset import (
+    AntmazeDataset, OnlineAntmazeDataset, DATASET_OBS_DIM, collect_episodes,
+)
 from trajectory_trainer import Trainer
 from evaluate import evaluate, dataset_to_env_id
 
@@ -40,6 +42,16 @@ def parse_args(uuid: str):
                         help='Local HDF5 path (overrides --dataset auto-download)')
     parser.add_argument('--cache_dir', default=None,
                         help='Directory to cache downloaded datasets')
+    parser.add_argument('--online', action='store_true',
+                        help='Collect training data from gymnasium env instead of offline HDF5')
+    parser.add_argument('--n_warmup_episodes', default=1000, type=int,
+                        help='Random-policy episodes collected at startup for dataset seeding and normalizer fitting')
+    parser.add_argument('--n_collect_episodes', default=0, type=int,
+                        help='Model-rollout episodes per periodic refresh (0 = same as --n_warmup_episodes)')
+    parser.add_argument('--collect_freq', default=0, type=int,
+                        help='Refresh dataset with model rollouts every N epochs (0 to disable)')
+    parser.add_argument('--observation_dim', default=None, type=int,
+                        help='Override observation dim for online data (inferred from --dataset if known)')
 
     # model
     parser.add_argument('--horizon', default=128, type=int,
@@ -65,7 +77,9 @@ def parse_args(uuid: str):
     parser.add_argument('--log_freq', default=100, type=int)
     parser.add_argument('--results_folder', default=f'./logs/antmaze-{uuid}')
     parser.add_argument('--load_step', default=None, type=int,
-                        help='Resume from this checkpoint step')
+                        help='Resume from checkpoint step within --results_folder')
+    parser.add_argument('--load_checkpoint', default=None, type=str,
+                        help='Load model weights from an arbitrary checkpoint path')
 
     # evaluation
     parser.add_argument('--eval_freq', default=0, type=int,
@@ -105,12 +119,23 @@ def main():
     # ------------------------------------------------------------------
     # Dataset
     # ------------------------------------------------------------------
-    dataset_src = args.dataset_path or args.dataset
-    dataset = AntmazeDataset(
-        dataset_src,
-        horizon=args.horizon,
-        cache_dir=args.cache_dir,
-    )
+    if args.online:
+        obs_dim_override = args.observation_dim or DATASET_OBS_DIM.get(args.dataset)
+        env_id = args.env_id or dataset_to_env_id(args.dataset)
+        dataset = OnlineAntmazeDataset(
+            env_id,
+            horizon=args.horizon,
+            n_warmup_episodes=args.n_warmup_episodes,
+            observation_dim=obs_dim_override,
+            seed=args.seed,
+        )
+    else:
+        dataset_src = args.dataset_path or args.dataset
+        dataset = AntmazeDataset(
+            dataset_src,
+            horizon=args.horizon,
+            cache_dir=args.cache_dir,
+        )
     obs_dim = dataset.observation_dim
     act_dim = dataset.action_dim
     transition_dim = obs_dim + act_dim
@@ -162,15 +187,20 @@ def main():
         device=device,
     )
 
-    if args.load_step is not None:
+    if args.load_checkpoint is not None:
+        trainer.load_from_path(args.load_checkpoint)
+    elif args.load_step is not None:
         trainer.load(args.load_step)
 
     # ------------------------------------------------------------------
     # WandB
     # ------------------------------------------------------------------
+    run_name = DATASET_TO_NAME.get(args.dataset, args.dataset)
+    if args.online:
+        run_name = f'{run_name} (online)'
     wandb.init(
         project=args.wandb_project,
-        name=DATASET_TO_NAME[args.dataset],
+        name=run_name,
         config=vars(args),
         reinit=True,
     )
@@ -183,10 +213,25 @@ def main():
     epochs_without_improvement = 0
     smoothed_loss = None
     eval_env_id = args.env_id or dataset_to_env_id(args.dataset)
+    n_collect = args.n_collect_episodes or args.n_warmup_episodes
 
     for epoch in range(n_epochs):
         print(f'Epoch {epoch} / {n_epochs} | {args.results_folder}')
         mean_loss = trainer.train(n_train_steps=args.n_steps_per_epoch)
+
+        if args.online and args.collect_freq > 0 and (epoch + 1) % args.collect_freq == 0:
+            print(f'[ Collect ] epoch {epoch} | {n_collect} model episodes from {eval_env_id}')
+            new_episodes = collect_episodes(
+                eval_env_id, n_collect,
+                diffusion=trainer.ema_model,
+                dataset=dataset,
+                observation_dim=dataset.observation_dim,
+                replan_every=args.replan_every,
+                device=device,
+            )
+            dataset.refresh(new_episodes)
+            trainer.reset_dataloader()
+            wandb.log({'collect/n_episodes': len(new_episodes)}, step=trainer.step)
 
         if args.eval_freq > 0 and (epoch + 1) % args.eval_freq == 0:
             print(f'[ Eval ] epoch {epoch} | {eval_env_id}')

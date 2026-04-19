@@ -118,6 +118,17 @@ class Trainer:
         self._reset_ema()
         self.step = 0
 
+    def reset_dataloader(self):
+        """Rebuild the dataloader after the dataset has been refreshed."""
+        self.dataloader = cycle(torch.utils.data.DataLoader(
+            self.dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True,
+            drop_last=True,
+        ))
+
     def _reset_ema(self):
         self.ema_model.load_state_dict(self.model.state_dict())
 
@@ -190,8 +201,14 @@ class Trainer:
 
     def load(self, epoch):
         loadpath = os.path.join(self.logdir, f'state_{epoch}.pt')
-        data = torch.load(loadpath, weights_only=True)
+        self._load_from_path(loadpath)
+
+    def load_from_path(self, path):
+        self._load_from_path(path)
+
+    def _load_from_path(self, path):
+        data = torch.load(path, weights_only=True)
         self.step = data['step']
         self.model.load_state_dict(data['model'])
         self.ema_model.load_state_dict(data['ema'])
-        print(f'[ Trainer ] Loaded checkpoint from {loadpath}', flush=True)
+        print(f'[ Trainer ] Loaded checkpoint from {path}', flush=True)
