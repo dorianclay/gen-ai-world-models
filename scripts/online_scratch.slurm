@@ -26,4 +26,5 @@ srun uv run python experiments/diffusion/train_antmaze.py \
   --n_warmup_episodes 500 \
   --n_collect_episodes 200 \
   --collect_freq 5 \
-  --eval_freq 10
+  --eval_freq 10 \
+  --n_eval_episodes 30
