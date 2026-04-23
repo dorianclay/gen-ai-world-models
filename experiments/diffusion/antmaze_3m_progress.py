@@ -29,11 +29,9 @@ Notes:
 - This stays aligned with the repo's updated online training path rather than
   maintaining a separate ad hoc update loop.
 
-debug with (took to long):
-uv run python experiments\diffusion\antmaze_3m_progress.py --dataset antmaze-umaze-v2 --load_checkpoint models\antmaze-Hn5Trrg9-980000.pt --n_warmup_episodes 10 --n_collect_episodes 5 --collect_freq 1 --eval_freq 1 --samples_per_plan 4 --n_train_steps 20 --n_steps_per_epoch 10 --device cpu
 
-debug with (new):
-uv run python experiments\diffusion\antmaze_3m_progress.py --dataset antmaze-umaze-v2 --load_checkpoint models\antmaze-Hn5Trrg9-980000.pt --n_warmup_episodes 5 --n_collect_episodes 1 --collect_freq 1 --eval_freq 0 --samples_per_plan 2 --replan_every 20 --n_train_steps 10 --n_steps_per_epoch 5 --device cpu
+debug example:
+uv run python experiments/diffusion/antmaze_3m_progress.py --dataset antmaze-umaze-v2 --load_checkpoint models/antmaze-Hn5Trrg9-980000.pt --n_warmup_episodes 5 --n_collect_episodes 1 --collect_freq 1 --eval_freq 0 --samples_per_plan 2 --replan_every 20 --n_train_steps 10 --n_steps_per_epoch 5 --device cpu
 """
 
 from __future__ import annotations
@@ -53,6 +51,7 @@ from trajectory_diffusion import GaussianDiffusion
 from antmaze_dataset import OnlineAntmazeDataset, DATASET_OBS_DIM
 from trajectory_trainer import Trainer
 from evaluate import evaluate, dataset_to_env_id
+from exploration_metrics import compute_xy_coverage_metrics_from_episodes
 
 import gymnasium as gym
 import gymnasium_robotics  # noqa: F401
@@ -408,6 +407,15 @@ def collect_episodes_3m(
             vals = [row[key] for row in log_rows if key in row]
             if vals:
                 summary[f'collect/{key}'] = float(np.mean(vals))
+    summary.update(
+        compute_xy_coverage_metrics_from_episodes(
+            episodes,
+            x_bounds=(-4.0, 4.0),
+            y_bounds=(-4.0, 4.0),
+            bin_size=0.5,
+            prefix='collect/xy',
+        )
+    )
     return episodes, summary
 
 

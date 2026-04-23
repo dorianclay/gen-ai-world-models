@@ -12,6 +12,7 @@ import numpy as np
 import torch
 import gymnasium as gym
 import gymnasium_robotics  # noqa: registers AntMaze envs
+from exploration_metrics import compute_xy_coverage_metrics_from_episodes
 
 
 # D4RL dataset name → gymnasium-robotics env id
@@ -99,6 +100,7 @@ def evaluate(diffusion, dataset, env_id, *, n_episodes=100, replan_every=5,
     """
     diffusion.eval()
     seed_scores = []
+    all_eval_episodes = []  # for computing exploration metrics like coverage
 
     for seed in seeds:
         env = gym.make(env_id)
@@ -107,18 +109,35 @@ def evaluate(diffusion, dataset, env_id, *, n_episodes=100, replan_every=5,
             # seed only the first episode of each seed for reproducibility;
             # subsequent episodes draw random starts from the env's RNG
             ep_seed = seed if ep == 0 else None
-            successes += int(_rollout_episode(
-                diffusion, dataset, env, replan_every, device, seed=ep_seed
-            ))
+            success, visited_xy = _rollout_episode(
+                diffusion,
+                dataset,
+                env,
+                replan_every,
+                device,
+                seed=ep_seed,
+            )
+            successes += int(success)
+            eval_obs = np.zeros((len(visited_xy), dataset.observation_dim), dtype=np.float32)
+            eval_obs[:, :2] = visited_xy
+            all_eval_episodes.append({'observations': eval_obs})
         env.close()
 
         score = successes / n_episodes * 100
         seed_scores.append(score)
         print(f'  seed={seed}  successes={successes}/{n_episodes}  score={score:.1f}',
               flush=True)
+    coverage_metrics = compute_xy_coverage_metrics_from_episodes(
+        all_eval_episodes,
+        x_bounds=(-4.0, 4.0),
+        y_bounds=(-4.0, 4.0),
+        bin_size=0.5,
+        prefix='eval/xy',
+    )
 
     diffusion.train()
     return {
         'normalized_score': float(np.mean(seed_scores)),
         'seed_scores': seed_scores,
+        **coverage_metrics,
     }

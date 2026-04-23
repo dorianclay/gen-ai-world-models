@@ -22,6 +22,9 @@ from antmaze_dataset import (
 )
 from trajectory_trainer import Trainer
 from evaluate import evaluate, dataset_to_env_id
+from exploration_metrics import compute_xy_coverage_metrics_from_episodes
+
+
 
 
 DATASET_TO_NAME = {
@@ -231,7 +234,19 @@ def main():
             )
             dataset.refresh(new_episodes)
             trainer.reset_dataloader()
-            wandb.log({'collect/n_episodes': len(new_episodes)}, step=trainer.step)
+            collect_metrics = {
+                'collect/n_episodes': len(new_episodes),
+            }
+            collect_metrics.update(
+                compute_xy_coverage_metrics_from_episodes(
+                    new_episodes,
+                    x_bounds=(-4.0, 4.0),
+                    y_bounds=(-4.0, 4.0),
+                    bin_size=0.5,
+                    prefix='collect/xy',
+                )
+            )
+            wandb.log(collect_metrics, step=trainer.step)
 
         if args.eval_freq > 0 and (epoch + 1) % args.eval_freq == 0:
             print(f'[ Eval ] epoch {epoch} | {eval_env_id}')
@@ -242,11 +257,15 @@ def main():
                 seeds=args.eval_seeds,
                 device=device,
             )
-            wandb.log({
-                'eval/normalized_score': results['normalized_score'],
-                **{f'eval/normalized_score_seed{s}': sc
-                   for s, sc in zip(args.eval_seeds, results['seed_scores'])},
-            }, step=trainer.step)
+            eval_log = {
+                k: v for k, v in results.items()
+                if k != 'seed_scores'
+            }
+            eval_log.update({
+                f'eval/normalized_score_seed{s}': sc
+                for s, sc in zip(args.eval_seeds, results['seed_scores'])
+            })
+            wandb.log(eval_log, step=trainer.step)
             print(f'[ Eval ] normalized_score={results["normalized_score"]:.1f}')
 
         if args.patience > 0:
