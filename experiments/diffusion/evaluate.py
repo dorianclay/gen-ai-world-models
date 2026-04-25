@@ -49,9 +49,10 @@ def _make_goal_obs(desired_goal, obs_normalizer):
 
 def _rollout_episode(diffusion, dataset, env, replan_every, device,
                      max_steps=700, seed=None):
-    """Run one episode; returns True on success."""
+    """Run one episode; returns (success, visited_xy) where visited_xy is an (N,2) array."""
     obs, _ = env.reset(seed=seed)
     action_buffer = []
+    visited_xy = [obs['achieved_goal'][:2].copy()]
 
     for _ in range(max_steps):
         if not action_buffer:
@@ -78,13 +79,14 @@ def _rollout_episode(diffusion, dataset, env, replan_every, device,
 
         action = np.clip(action_buffer.pop(0), env.action_space.low, env.action_space.high)
         obs, _, terminated, truncated, info = env.step(action)
+        visited_xy.append(obs['achieved_goal'][:2].copy())
 
         if info.get('success', False):
-            return True
+            return True, np.array(visited_xy)
         if terminated or truncated:
-            return False
+            return False, np.array(visited_xy)
 
-    return False
+    return False, np.array(visited_xy)
 
 
 def evaluate(diffusion, dataset, env_id, *, n_episodes=100, replan_every=5,
